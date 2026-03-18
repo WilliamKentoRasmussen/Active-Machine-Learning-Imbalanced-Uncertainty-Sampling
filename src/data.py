@@ -4,7 +4,8 @@ from torch.utils.data import Subset
 from torchvision import datasets
 from torchvision.transforms import ToTensor
 from sklearn.model_selection import ShuffleSplit
-def load_data():
+
+def load_data_v2(n_init= 100):
 
     training_data = datasets.MNIST(
         root="../data",
@@ -25,7 +26,7 @@ def load_data():
     amount = defaultdict(int)
     targets = training_data.targets
 
-    print("sjkhfskdjfhlshf")
+    
 
     for digit in range(10):
         digit_indices = (targets == digit).nonzero(as_tuple=True)[0]
@@ -46,7 +47,7 @@ def load_data():
     #print(len(subset_training_data))
 
   
-    X = training_data.data[indices].float() / 255.0   # shape: (N, 28, 28)
+    X = training_data.data[indices].float() / 255.0 
     y = training_data.targets[indices]
 
     X_test = test_data.data.float() / 255.0
@@ -54,24 +55,24 @@ def load_data():
 
   
     seed = 0
-    n_init = 20
     n = len(subset_training_data)
-    pool_fraction = 0.5
-    sss = ShuffleSplit(n_splits=1, train_size=pool_fraction, random_state=seed)
+    
+
+    sss = ShuffleSplit(n_splits=1, train_size=n_init/n, random_state=seed)
     train_idx, pool_idx = next(sss.split(X, y))
 
    
     data = dict(
         train=dict(
-            X=X[train_idx],
+            X=X[train_idx].reshape(len(X[train_idx]), -1),
             y=y[train_idx]
         ),
         pool=dict(
-            X=X[pool_idx],
+            X=X[pool_idx].reshape(len(X[pool_idx]), -1),
             y=y[pool_idx]
         ),
         test=dict(
-            X=X_test,
+            X=X_test.reshape(len(X_test), -1),
             y=y_test
         )
     )
