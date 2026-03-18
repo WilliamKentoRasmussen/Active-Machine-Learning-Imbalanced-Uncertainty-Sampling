@@ -33,10 +33,10 @@ def load_data(n_init=100):
     for digit in range(10):
         digit_indices = (targets == digit).nonzero(as_tuple=True)[0]
         if digit < threshold:
-            selected = digit_indices[: len(digit_indices) // 10]   # keep 10%
+            selected = digit_indices[: len(digit_indices) // 400]   # keep 10%
             amount["below"] += len(selected)
         else:
-            selected = digit_indices[: len(digit_indices) // 100]  # keep 1%
+            selected = digit_indices[: len(digit_indices) // 1000]  # keep 1%
             amount["above"] += len(selected)
         indices.append(selected)
 
@@ -47,6 +47,8 @@ def load_data(n_init=100):
 
     X_test = test_data.data.float() / 255.0
     y_test = test_data.targets
+    X_test= X_test[0:100]
+    y_test = y_test[0:100]
 
     seed = 0
     n = len(indices)
@@ -173,5 +175,5 @@ if __name__ == "__main__":
     ax.set_ylabel("Classification Accuracy")
     ax.set_title("Active Learning vs Random Sampling on MNIST")
     fig.tight_layout()
-    fig.savefig("Classification.png", dpi=150)
+    fig.savefig("./data/sampling.png", dpi=150)
     print("Saved Classification.png")
