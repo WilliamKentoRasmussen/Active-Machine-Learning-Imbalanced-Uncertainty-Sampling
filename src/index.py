@@ -16,8 +16,11 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from tqdm import tqdm
 
+threshold = 5
 
-def load_data(n_init=100):
+selected_classes= defaultdict(int)
+
+def load_data(n_init=100, imbalanced=True):
     training_data = datasets.MNIST(
         root="./data", train=True, download=True, transform=ToTensor()
     )
@@ -26,21 +29,39 @@ def load_data(n_init=100):
     )
 
     indices = []
-    threshold = 5
+    
     amount = defaultdict(int)
     targets = training_data.targets
 
-    for digit in range(10):
-        digit_indices = (targets == digit).nonzero(as_tuple=True)[0]
-        if digit < threshold:
-            selected = digit_indices[: len(digit_indices) // 400]   # keep 10%
-            amount["below"] += len(selected)
-        else:
-            selected = digit_indices[: len(digit_indices) // 1000]  # keep 1%
-            amount["above"] += len(selected)
-        indices.append(selected)
+    if imbalanced:
+        for digit in range(10):
+            digit_indices = (targets == digit).nonzero(as_tuple=True)[0]
+            if digit < threshold:
+                selected = digit_indices[: len(digit_indices) // 400]   # keep 10%
+                amount[str(digit)] += len(selected)
+                amount["below"] += len(selected)
+                
+            else:
+                selected = digit_indices[: len(digit_indices) // 1000]  # keep 1%
+                amount[str(digit)] += len(selected)
+                amount["above"] += len(selected)
+
+            indices.append(selected)
+    else: 
+        for digit in range(10):
+            digit_indices = (targets == digit).nonzero(as_tuple=True)[0]
+            if digit < threshold:
+                selected = digit_indices[: len(digit_indices) // 400]   # keep 10%
+                amount[str(digit)] += len(selected)
+                amount["below"] += len(selected)
+            else:
+                selected = digit_indices[: len(digit_indices) // 400]  # keep 1%
+                amount[str(digit)] += len(selected)
+                amount["above"] += len(selected)
+            indices.append(selected)
 
     indices = torch.cat(indices)
+    print("\n\nImbalanced: ", imbalanced, amount)
 
     X = training_data.data[indices].float() / 255.0
     y = training_data.targets[indices]
@@ -52,7 +73,7 @@ def load_data(n_init=100):
 
     seed = 0
     n = len(indices)
-    print(f"Total subset size: {n}")
+    print(f"Total subset size: {n}\n\n")
 
     sss = ShuffleSplit(n_splits=1, train_size=n_init / n, random_state=seed)
     train_idx, pool_idx = next(sss.split(X.numpy(), y.numpy()))
@@ -89,14 +110,23 @@ def evaluate_uncertainty(prob, strategy):
         raise ValueError(f"Unknown strategy: {strategy!r}")
 
 
-def update_data(data, idx):
+def update_data(data, idx, strategy = "unknown"):
     """Move the point at pool index `idx` into the training set."""
     data["train"]["X"] = np.append(
         data["train"]["X"], np.atleast_2d(data["pool"]["X"][idx]), axis=0
     )
+
+    label = data["pool"]["y"][idx]
     data["train"]["y"] = np.append(
-        data["train"]["y"], np.atleast_1d(data["pool"]["y"][idx]), axis=0
+        data["train"]["y"], np.atleast_1d(label), axis=0
     )
+    if data["pool"]["y"][idx] < threshold:
+        selected_classes[strategy][str(label)] += len(label)
+        selected_classes[strategy]["below"] += len(label)
+    else: 
+        selected_classes[strategy][str(label)] += len(label)
+        selected_classes[strategy]["above"] += len(label)
+
     data["pool"]["X"] = np.delete(data["pool"]["X"], idx, axis=0)
     data["pool"]["y"] = np.delete(data["pool"]["y"], idx, axis=0)
 
@@ -135,7 +165,7 @@ def fit_model(base_data, paradigm, strategy, n_init, n_iterations, plot=False):
         else:
             raise ValueError(f"Unknown paradigm: {paradigm!r}")
 
-        update_data(data, idx)
+        update_data(data, idx, strategy= strategy)
 
     return scores
 
@@ -146,24 +176,30 @@ if __name__ == "__main__":
     N_AVG        = 50
 
 
-    base_data = load_data(n_init=N_INIT)
+    #base_data = load_data(n_init=N_INIT)
+    imbalanced_data = load_data(n_init=N_INIT, imbalanced = True)
+    balanced_data = load_data(n_init=N_INIT)
 
-    print(f"Train  X: {base_data['train']['X'].shape}")
-    print(f"Pool   X: {base_data['pool']['X'].shape}")
-    print(f"Test   X: {base_data['test']['X'].shape}\n")
+    print("\n\n imbalanced:")
+    print(f"Train  X: {imbalanced_data['train']['X'].shape}")
+    print(f"Pool   X: {imbalanced_data['pool']['X'].shape}")
+    print(f"Test   X: {imbalanced_data['test']['X'].shape}\n")
+
+    
 
     scores_al = np.zeros((N_AVG, N_ITERATIONS))
     scores_rn = np.zeros((N_AVG, N_ITERATIONS))
 
     for i in tqdm(range(N_AVG), desc="Averaging runs"):
-        scores_al[i] = fit_model(base_data, "active learning", "entropy", N_INIT, N_ITERATIONS)
-        scores_rn[i] = fit_model(base_data, "random",          "entropy", N_INIT, N_ITERATIONS)
+        scores_al[i] = fit_model(imbalanced_data, "active learning", "entropy", N_INIT, N_ITERATIONS)
+        scores_rn[i] = fit_model(imbalanced_data, "random",          "entropy", N_INIT, N_ITERATIONS)
 
     # Plot
     fig, ax = plt.subplots(1, 1, figsize=(8, 5))
     x_axis = np.arange(N_INIT, N_ITERATIONS + N_INIT)
     ax.plot(x_axis, scores_al.mean(0), label="Active learning (entropy)")
     ax.plot(x_axis, scores_rn.mean(0), label="Random")
+    
     ax.fill_between(x_axis,
                     scores_al.mean(0) - scores_al.std(0),
                     scores_al.mean(0) + scores_al.std(0), alpha=0.2)
@@ -175,5 +211,39 @@ if __name__ == "__main__":
     ax.set_ylabel("Classification Accuracy")
     ax.set_title("Active Learning vs Random Sampling on MNIST")
     fig.tight_layout()
-    fig.savefig("./data/sampling.png", dpi=150)
-    print("Saved Classification.png")
+    fig.savefig("./data/imbalancedsampling.png", dpi=150)
+    print("Saved imbalancedsampling.png")
+
+    print("\n\n balanced:")
+    print(f"Train  X: {balanced_data['train']['X'].shape}")
+    print(f"Pool   X: {balanced_data['pool']['X'].shape}")
+    print(f"Test   X: {balanced_data['test']['X'].shape}\n")
+
+    scores_al = np.zeros((N_AVG, N_ITERATIONS))
+    scores_rn = np.zeros((N_AVG, N_ITERATIONS))
+
+    for i in tqdm(range(N_AVG), desc="Averaging runs"):
+        scores_al[i] = fit_model(balanced_data, "active learning", "entropy", N_INIT, N_ITERATIONS)
+        scores_rn[i] = fit_model(balanced_data, "random",          "entropy", N_INIT, N_ITERATIONS)
+
+    # Plot
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+    x_axis = np.arange(N_INIT, N_ITERATIONS + N_INIT)
+    ax.plot(x_axis, scores_al.mean(0), label="Active learning (entropy)")
+    ax.plot(x_axis, scores_rn.mean(0), label="Random")
+    
+    ax.fill_between(x_axis,
+                    scores_al.mean(0) - scores_al.std(0),
+                    scores_al.mean(0) + scores_al.std(0), alpha=0.2)
+    ax.fill_between(x_axis,
+                    scores_rn.mean(0) - scores_rn.std(0),
+                    scores_rn.mean(0) + scores_rn.std(0), alpha=0.2)
+    ax.legend()
+    ax.set_xlabel("Training set size")
+    ax.set_ylabel("Classification Accuracy")
+    ax.set_title("Active Learning vs Random Sampling on MNIST")
+    fig.tight_layout()
+    fig.savefig("./data/balanced_sampling.png", dpi=150)
+    print("Saved balanced_sampling.png")
+
+
