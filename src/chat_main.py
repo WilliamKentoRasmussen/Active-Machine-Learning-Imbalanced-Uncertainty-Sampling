@@ -266,7 +266,7 @@ def run_experiment(data, name, all_dfs, n_init):
 if __name__ == "__main__":
     N_INIT       = 20
     N_ITERATIONS = 80
-    N_AVG        = 10
+    N_AVG        = 30
 
     imbalanced_data = load_data(imbalanced=True)
     balanced_data   = load_data(imbalanced=False)
