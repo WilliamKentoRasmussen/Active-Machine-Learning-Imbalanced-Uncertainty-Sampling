@@ -17,7 +17,7 @@ from tqdm import tqdm
 threshold = 5
 
 
-def load_data(n_init=20, imbalanced=True, total_per_class=200):
+def load_data(imbalanced=True, total_per_class=200):
     training_data = datasets.MNIST(
         root="./data", train=True, download=True, transform=ToTensor()
     )
@@ -57,19 +57,13 @@ def load_data(n_init=20, imbalanced=True, total_per_class=200):
     X_test = X_test[:1000]
     y_test = y_test[:1000]
 
-    n = len(indices)
-
-    sss = ShuffleSplit(n_splits=1, train_size=n_init, random_state=0)
-    train_idx, pool_idx = next(sss.split(X.numpy(), y.numpy()))
+    X_all = X.reshape(len(indices), -1).numpy()
+    y_all = y.numpy()
 
     data = dict(
-        train=dict(
-            X=X[train_idx].reshape(len(train_idx), -1).numpy(),
-            y=y[train_idx].numpy(),
-        ),
-        pool=dict(
-            X=X[pool_idx].reshape(len(pool_idx), -1).numpy(),
-            y=y[pool_idx].numpy(),
+        all=dict(
+            X=X_all,
+            y=y_all,
         ),
         test=dict(
             X=X_test.reshape(len(X_test), -1).numpy(),
@@ -82,7 +76,7 @@ def load_data(n_init=20, imbalanced=True, total_per_class=200):
 def get_dataset_info(data, dataset_name):
     """Build a DataFrame summarising dataset sizes and class distributions."""
     rows = []
-    for split in ("train", "pool", "test"):
+    for split in ("all", "test"):
         y = data[split]["y"]
         n_total = len(y)
         class_counts = {f"class_{c}": int(np.sum(y == c)) for c in range(10)}
@@ -133,8 +127,13 @@ def update_data(data, idx, strategy, selected_classes):
     data["pool"]["y"] = np.delete(data["pool"]["y"], idx, axis=0)
 
 
-def fit_model(base_data, paradigm, strategy, n_iterations, selected_classes):
+def fit_model(base_data, paradigm, strategy, n_iterations, selected_classes, n_init, run_idx):
     data = copy.deepcopy(base_data)
+
+    sss = ShuffleSplit(n_splits=1, train_size=n_init, random_state=run_idx)
+    train_idx, pool_idx = next(sss.split(data["all"]["X"], data["all"]["y"]))
+    data["train"] = dict(X=data["all"]["X"][train_idx], y=data["all"]["y"][train_idx])
+    data["pool"]  = dict(X=data["all"]["X"][pool_idx],  y=data["all"]["y"][pool_idx])
 
     scores = np.zeros(n_iterations)
     minority_scores = np.zeros(n_iterations)
@@ -180,7 +179,7 @@ def build_selected_labels_df(selected_classes, dataset_name):
     return pd.DataFrame(rows)
 
 
-def run_experiment(data, name, all_dfs):
+def run_experiment(data, name, all_dfs, n_init):
     # BUG FIX: per-experiment selected_classes dict — not global
     selected_classes = defaultdict(lambda: defaultdict(int))
 
@@ -195,10 +194,10 @@ def run_experiment(data, name, all_dfs):
     min_scores_rn                 = np.zeros((N_AVG, N_ITERATIONS))
 
     for i in tqdm(range(N_AVG), desc=f"{name} runs"):
-        scores_al_entropy[i],         min_scores_al_entropy[i]         = fit_model(data, "active learning", "entropy",         N_ITERATIONS, selected_classes)
-        scores_al_least_confident[i], min_scores_al_least_confident[i] = fit_model(data, "active learning", "least confident", N_ITERATIONS, selected_classes)
-        scores_al_margin[i],          min_scores_al_margin[i]          = fit_model(data, "active learning", "margin",          N_ITERATIONS, selected_classes)
-        scores_rn[i],                 min_scores_rn[i]                 = fit_model(data, "random",          "random",          N_ITERATIONS, selected_classes)
+        scores_al_entropy[i],         min_scores_al_entropy[i]         = fit_model(data, "active learning", "entropy",         N_ITERATIONS, selected_classes, n_init, run_idx=i)
+        scores_al_least_confident[i], min_scores_al_least_confident[i] = fit_model(data, "active learning", "least confident", N_ITERATIONS, selected_classes, n_init, run_idx=i)
+        scores_al_margin[i],          min_scores_al_margin[i]          = fit_model(data, "active learning", "margin",          N_ITERATIONS, selected_classes, n_init, run_idx=i)
+        scores_rn[i],                 min_scores_rn[i]                 = fit_model(data, "random",          "random",          N_ITERATIONS, selected_classes, n_init, run_idx=i)
 
     # ── Confidence intervals ───────────────────────────────────────────────────
     # 95% CI at each iteration point: mean ± t * (std / sqrt(n))
@@ -269,14 +268,14 @@ if __name__ == "__main__":
     N_ITERATIONS = 80
     N_AVG        = 10
 
-    imbalanced_data = load_data(n_init=N_INIT, imbalanced=True)
-    balanced_data   = load_data(n_init=N_INIT, imbalanced=False)
+    imbalanced_data = load_data(imbalanced=True)
+    balanced_data   = load_data(imbalanced=False)
 
     # Collect DataFrames from both experiments
     all_dfs = {"dataset_info": [], "selected_labels": []}
 
-    run_experiment(imbalanced_data, "imbalanced", all_dfs)
-    run_experiment(balanced_data,   "balanced",   all_dfs)
+    run_experiment(imbalanced_data, "imbalanced", all_dfs, n_init=N_INIT)
+    run_experiment(balanced_data,   "balanced",   all_dfs, n_init=N_INIT)
 
     # ── Combined DataFrames ───────────────────────────────────────────────────
     df_dataset_info    = pd.concat(all_dfs["dataset_info"],    ignore_index=True)
